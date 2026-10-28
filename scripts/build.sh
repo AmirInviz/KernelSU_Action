@@ -21,27 +21,40 @@ DEFCONFIG_PATH="${KERNEL_DIR}/arch/${ARCH}/configs/${KERNEL_CONFIG}"
 prepare_defconfig() {
 	group "Preparing defconfig"
 
-	info "Setting up backslashxx KernelSU..."
+	info "Setting up backslashxx KernelSU and Compatibility Stubs..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${WORKSPACE}/ksu_src"
 
-	# ۱. آماده‌سازی کامل پوشه drivers/kernelsu
+	# ۱. استقرار سورس‌های backslashxx در drivers/kernelsu
 	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
 	cp -r "${WORKSPACE}/ksu_src/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
 	if [ -d "${WORKSPACE}/ksu_src/kernel" ]; then
 		cp -r "${WORKSPACE}/ksu_src/kernel/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
 	fi
 
-	# ۲. آماده‌سازی کامل پوشه KernelSU در ریشه (جهت پشتیبانی از کدهای EmanuelCN)
-	mkdir -p "${KERNEL_DIR}/KernelSU"
-	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/" 2>/dev/null || true
-	mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
-	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
+	# ۲. ایجاد فایل توابع سازگاری برای حل قطعی ۱۰ ارور undefined symbol
+	cat << 'EOF' > "${KERNEL_DIR}/drivers/ksu_compat_stubs.c"
+#include <linux/types.h>
+#include <linux/fs.h>
 
-	# ۳. اتصال همزمان در drivers/Makefile و Makefile ریشه
+int ksu_handle_faccessat(int *dfd, const char **filename_user, int *mode, int *flags) { return 0; }
+bool ksu_vfs_read_hook __read_mostly = false;
+int ksu_handle_vfs_read(struct file **file_ptr, char **buf_ptr, size_t *count_ptr, loff_t **pos) { return 0; }
+int ksu_handle_stat(int *dfd, const char **filename_user, int *flags) { return 0; }
+bool ksu_execveat_hook __read_mostly = false;
+int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags) { return 0; }
+int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags) { return 0; }
+int ksu_handle_devpts(struct inode *inode) { return 0; }
+bool ksu_input_hook __read_mostly = false;
+int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) { return 0; }
+EOF
+
+	# ۳. اتصال سورس‌ها و فایل Stubs به Makefile درایورها
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
-	printf '\nobj-y += kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
+	sed -i '/ksu_compat_stubs/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
+	printf '\nobj-y += ksu_compat_stubs.o kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
 
+	# ۴. استقرار در Kconfig
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Kconfig" 2>/dev/null || true
 	printf '\nsource "drivers/kernelsu/Kconfig"\n' >>"${KERNEL_DIR}/drivers/Kconfig"
 

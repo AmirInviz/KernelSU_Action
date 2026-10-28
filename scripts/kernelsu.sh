@@ -32,13 +32,13 @@ ksu_install() {
 
 	[ "$variant" = "none" ] && { info "KernelSU integration disabled"; return 0; }
 
-	# تمیزکاری کرنل قدیمی و برطرف کردن خطای missing-syscalls و فلگ‌های ناسازگار
-	info "Applying fixes for EmanuelCN kernel and missing-syscalls..."
+	# تمیزکاری کرنل قدیمی، غیرفعال کردن چک سیستم‌کال‌ها و حذف فلگ‌های ناسازگار MLGO
+	info "Applying fixes for EmanuelCN kernel, missing-syscalls, and MLGO..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
 	sed -i 's/exit 1/exit 0/g' "${KERNEL_DIR}/scripts/checksyscalls.sh" 2>/dev/null || true
-	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
-	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
+	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
+	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
 
 	local repo setup_ref dir modern_ref legacy_ref susfs_refs name
 	IFS='|' read -r repo setup_ref dir modern_ref legacy_ref susfs_refs name <<<"$(ksu_registry "$variant")"

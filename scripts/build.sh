@@ -21,20 +21,27 @@ DEFCONFIG_PATH="${KERNEL_DIR}/arch/${ARCH}/configs/${KERNEL_CONFIG}"
 prepare_defconfig() {
 	group "Preparing defconfig"
 
-	# تضمین دانلود و استقرار کامل backslashxx قبل از هرگونه ساخت defconfig
-	if [ ! -f "${KERNEL_DIR}/drivers/kernelsu/Kconfig" ]; then
-		info "Pre-populating drivers/kernelsu from backslashxx..."
-		rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
-		git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${KERNEL_DIR}/drivers/kernelsu"
-		mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
-		cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/" 2>/dev/null || true
-		cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
-		sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
-		printf '\nobj-y += kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
-		sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Kconfig" 2>/dev/null || true
-		sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "${KERNEL_DIR}/drivers/Kconfig"
-		sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
+	info "Setting up backslashxx KernelSU..."
+	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
+	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${KERNEL_DIR}/KernelSU"
+
+	# ایجاد پوشه درایور و قرار دادن تمام فایل‌ها (حتی اگر داخل پوشه kernel باشند) در ریشه درایور
+	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
+	cp -r "${KERNEL_DIR}/KernelSU/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
+	if [ -d "${KERNEL_DIR}/KernelSU/kernel" ]; then
+		cp -r "${KERNEL_DIR}/KernelSU/kernel/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
 	fi
+	mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
+	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
+
+	# اتصال تمیز به Makefile و Kconfig درایورها
+	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
+	printf '\nobj-y += kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
+
+	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Kconfig" 2>/dev/null || true
+	printf '\nsource "drivers/kernelsu/Kconfig"\n' >>"${KERNEL_DIR}/drivers/Kconfig"
+
+	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
 
 	[ -f "$DEFCONFIG_PATH" ] \
 		|| die "defconfig not found: arch/${ARCH}/configs/${KERNEL_CONFIG}
@@ -117,7 +124,7 @@ build_kernel() {
 	export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-Github-Action}
 	export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-kernelsu-action}
 
-	# اعمال فیکس‌های مربوط به missing-syscalls و MLGO قبل از کامپایل
+	# اعمال فیکس‌های مربوط به missing-syscalls و MLGO
 	sed -i 's/exit 1/exit 0/g' "${KERNEL_DIR}/scripts/checksyscalls.sh" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true

@@ -79,6 +79,11 @@ ksu_install() {
 
 	[ "$variant" = "none" ] && { info "KernelSU integration disabled"; return 0; }
 
+	# Purge pre-existing obsolete KernelSU from EmanuelCN tree to prevent Kconfig recursive dependency
+	info "Cleaning up any pre-existing KernelSU trees..."
+	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
+	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
+
 	local repo setup_ref dir modern_ref legacy_ref susfs_refs name
 	IFS='|' read -r repo setup_ref dir modern_ref legacy_ref susfs_refs name <<<"$(ksu_registry "$variant")"
 

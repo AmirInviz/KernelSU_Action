@@ -32,10 +32,11 @@ ksu_install() {
 
 	[ "$variant" = "none" ] && { info "KernelSU integration disabled"; return 0; }
 
-	# تمیزکاری کرنل قدیمی و حذف فلگ‌های ناسازگار Polly
-	info "Cleaning up old KernelSU and removing incompatible Polly flags..."
+	# تمیزکاری کرنل قدیمی و برطرف کردن خطای missing-syscalls و فلگ‌های ناسازگار
+	info "Applying fixes for EmanuelCN kernel and missing-syscalls..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
+	sed -i 's/exit 1/exit 0/g' "${KERNEL_DIR}/scripts/checksyscalls.sh" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
 

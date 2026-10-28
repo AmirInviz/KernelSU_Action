@@ -32,7 +32,7 @@ ksu_install() {
 
 	[ "$variant" = "none" ] && { info "KernelSU integration disabled"; return 0; }
 
-	# تمیزکاری کرنل قدیمی، غیرفعال کردن چک سیستم‌کال‌ها و حذف فلگ‌های ناسازگار MLGO
+	# تمیزکاری کرنل قدیمی و حذف فلگ‌های ناسازگار
 	info "Applying fixes for EmanuelCN kernel, missing-syscalls, and MLGO..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
@@ -76,10 +76,10 @@ ksu_install() {
 	local ksu_dir="${KERNEL_DIR}/${dir}"
 	[ -d "$ksu_dir" ] || die "${name} setup.sh finished but ${dir}/ is missing"
 
+	# اطمینان قطعی از لینک شدن آبجکت‌های KernelSU به بیلد نهایی کرنل
 	local driver_makefile="${KERNEL_DIR}/drivers/Makefile"
-	if ! grep -qE '^[[:space:]]*obj-\$\(CONFIG_KSU\)[[:space:]]*\+=[[:space:]]*kernelsu/?[[:space:]]*$' "$driver_makefile"; then
-		printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >>"$driver_makefile"
-	fi
+	sed -i '/kernelsu/d' "$driver_makefile" 2>/dev/null || true
+	printf '\nobj-y += kernelsu/\n' >>"$driver_makefile"
 
 	local head_desc head_sha
 	head_sha=$(git -C "$ksu_dir" rev-parse --short HEAD)
@@ -115,6 +115,8 @@ ksu_hook_configs() {
 	kconf_enable "$defconfig" CONFIG_KPROBES
 	kconf_enable "$defconfig" CONFIG_HAVE_KPROBES
 	kconf_enable "$defconfig" CONFIG_KPROBE_EVENTS
+	kconf_enable "$defconfig" CONFIG_KSU
+	kconf_enable "$defconfig" CONFIG_KSU_MANUAL_HOOK
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

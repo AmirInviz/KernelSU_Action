@@ -32,14 +32,6 @@ ksu_install() {
 
 	[ "$variant" = "none" ] && { info "KernelSU integration disabled"; return 0; }
 
-	# تمیزکاری کرنل قدیمی و حذف فلگ‌های ناسازگار
-	info "Applying fixes for EmanuelCN kernel, missing-syscalls, and MLGO..."
-	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
-	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
-	sed -i 's/exit 1/exit 0/g' "${KERNEL_DIR}/scripts/checksyscalls.sh" 2>/dev/null || true
-	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
-	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
-
 	local repo setup_ref dir modern_ref legacy_ref susfs_refs name
 	IFS='|' read -r repo setup_ref dir modern_ref legacy_ref susfs_refs name <<<"$(ksu_registry "$variant")"
 
@@ -57,27 +49,28 @@ ksu_install() {
 		fi
 	fi
 
-	if [ -n "$ref" ]; then
-		info "validating ref '${ref}' exists in ${repo}"
-		ref_exists "$repo" "$ref" || die "ref '${ref}' does not exist in ${repo}."
-		ok "ref '${ref}' exists"
-	fi
+	# 1. پاکسازی تداخل‌های قبلی و حذف فلگ‌های ناسازگار
+	info "Applying fixes for EmanuelCN kernel..."
+	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
+	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
+	sed -i 's/exit 1/exit 0/g' "${KERNEL_DIR}/scripts/checksyscalls.sh" 2>/dev/null || true
+	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
+	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
 
-	# دانلود سورس backslashxx
+	# 2. کلون مستقیم سورس backslashxx به صورت کامل
 	local ksu_dir="${KERNEL_DIR}/${dir}"
-	rm -rf "$ksu_dir"
 	git clone -q --depth=1 -b "${ref:-master}" "$repo" "$ksu_dir" || die "Failed to clone ${repo}"
 
-	# کپی مستقیم فایل‌های سورس backslashxx در مسیر درایورها برای حل خطای undefined symbol
-	info "Populating drivers/kernelsu from backslashxx..."
-	rm -rf "${KERNEL_DIR}/drivers/kernelsu"
+	# 3. ایجاد بلافاصله پوشه drivers/kernelsu تا defconfig با خطای missing file متوقف نشود
+	info "Populating drivers/kernelsu..."
 	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
 	cp -r "${ksu_dir}/"* "${KERNEL_DIR}/drivers/kernelsu/"
 
-	# ایجاد ساختار سازگار برای ریشه کرنل
+	# 4. همگام‌سازی ساختار برای ریشه کرنل
 	mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
 	cp -r "${ksu_dir}/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
 
+	# 5. تنظیمات Makefile و Kconfig درایورها
 	local driver_makefile="${KERNEL_DIR}/drivers/Makefile"
 	sed -i '/kernelsu/d' "$driver_makefile" 2>/dev/null || true
 	printf '\nobj-y += kernelsu/\n' >>"$driver_makefile"

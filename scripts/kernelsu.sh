@@ -40,16 +40,8 @@ ksu_install() {
 
 	local kver ref=$requested_ref
 	kver=$(kernel_version "$KERNEL_DIR" || echo "0.0")
-	if [ -z "$ref" ]; then
-		if ver_ge "$kver" "5.10"; then
-			ref=$modern_ref
-		else
-			ref=$legacy_ref
-			[ -n "$ref" ] && info "kernel ${kver} is pre-GKI; defaulting to ref '${ref}'"
-		fi
-	fi
 
-	# 1. پاکسازی تداخل‌های قبلی و حذف فلگ‌های ناسازگار
+	# ۱. پاکسازی پوشه‌های قدیمی و اعمال فیکس‌های سازگاری
 	info "Applying fixes for EmanuelCN kernel..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	sed -i '/KernelSU/d' "${KERNEL_DIR}/arch/arm64/Kconfig" 2>/dev/null || true
@@ -57,40 +49,35 @@ ksu_install() {
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
 
-	# 2. کلون مستقیم سورس backslashxx به صورت کامل
-	local ksu_dir="${KERNEL_DIR}/${dir}"
-	git clone -q --depth=1 -b "${ref:-master}" "$repo" "$ksu_dir" || die "Failed to clone ${repo}"
+	# ۲. دانلود مستقیم سورس backslashxx داخل drivers/kernelsu
+	info "Cloning backslashxx directly into drivers/kernelsu..."
+	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${KERNEL_DIR}/drivers/kernelsu"
 
-	# 3. ایجاد بلافاصله پوشه drivers/kernelsu تا defconfig با خطای missing file متوقف نشود
-	info "Populating drivers/kernelsu..."
-	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
-	cp -r "${ksu_dir}/"* "${KERNEL_DIR}/drivers/kernelsu/"
-
-	# 4. همگام‌سازی ساختار برای ریشه کرنل
+	# ۳. کپی در ریشه کرنل جهت سازگاری با رفرنس‌های احتمالی
 	mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
-	cp -r "${ksu_dir}/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
+	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/" 2>/dev/null || true
+	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
 
-	# 5. تنظیمات Makefile و Kconfig درایورها
+	# ۴. تنظیم اتصالات Makefile و Kconfig
 	local driver_makefile="${KERNEL_DIR}/drivers/Makefile"
 	sed -i '/kernelsu/d' "$driver_makefile" 2>/dev/null || true
 	printf '\nobj-y += kernelsu/\n' >>"$driver_makefile"
 
 	local driver_kconfig="${KERNEL_DIR}/drivers/Kconfig"
-	if ! grep -q 'drivers/kernelsu/Kconfig' "$driver_kconfig"; then
-		sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$driver_kconfig"
-	fi
+	sed -i '/kernelsu/d' "$driver_kconfig" 2>/dev/null || true
+	sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$driver_kconfig"
 
 	local head_desc head_sha
-	head_sha=$(git -C "$ksu_dir" rev-parse --short HEAD)
-	head_desc=$(git -C "$ksu_dir" describe --tags --always 2>/dev/null || echo "$head_sha")
+	head_sha=$(git -C "${KERNEL_DIR}/drivers/kernelsu" rev-parse --short HEAD)
+	head_desc=$(git -C "${KERNEL_DIR}/drivers/kernelsu" describe --tags --always 2>/dev/null || echo "$head_sha")
 
 	local count version_label
-	count=$(git -C "$ksu_dir" rev-list --count HEAD 2>/dev/null || echo 0)
-	version_label="${ref:-HEAD}-${head_sha}"
+	count=$(git -C "${KERNEL_DIR}/drivers/kernelsu" rev-list --count HEAD 2>/dev/null || echo 0)
+	version_label="backslashxx-${head_sha}"
 
-	export_env KSU_DIR "$dir"
+	export_env KSU_DIR "drivers/kernelsu"
 	export_env KSU_NAME "$name"
-	export_env KSU_REF_RESOLVED "${ref:-<latest-tag>}"
+	export_env KSU_REF_RESOLVED "master"
 	export_env KSU_VERSION_LABEL "$version_label"
 	export_env KSU_COMMIT_COUNT "$count"
 	export_env KSU_SUSFS_BUNDLED_REFS "$susfs_refs"

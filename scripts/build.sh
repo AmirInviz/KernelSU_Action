@@ -23,18 +23,22 @@ prepare_defconfig() {
 
 	info "Setting up backslashxx KernelSU..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
-	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${KERNEL_DIR}/KernelSU"
+	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${WORKSPACE}/ksu_src"
 
-	# ایجاد پوشه درایور و قرار دادن تمام فایل‌ها (حتی اگر داخل پوشه kernel باشند) در ریشه درایور
+	# ۱. آماده‌سازی کامل پوشه drivers/kernelsu
 	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
-	cp -r "${KERNEL_DIR}/KernelSU/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
-	if [ -d "${KERNEL_DIR}/KernelSU/kernel" ]; then
-		cp -r "${KERNEL_DIR}/KernelSU/kernel/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
+	cp -r "${WORKSPACE}/ksu_src/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
+	if [ -d "${WORKSPACE}/ksu_src/kernel" ]; then
+		cp -r "${WORKSPACE}/ksu_src/kernel/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
 	fi
+
+	# ۲. آماده‌سازی کامل پوشه KernelSU در ریشه (جهت پشتیبانی از کدهای EmanuelCN)
+	mkdir -p "${KERNEL_DIR}/KernelSU"
+	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/" 2>/dev/null || true
 	mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
 	cp -r "${KERNEL_DIR}/drivers/kernelsu/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
 
-	# اتصال تمیز به Makefile و Kconfig درایورها
+	# ۳. اتصال همزمان در drivers/Makefile و Makefile ریشه
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
 	printf '\nobj-y += kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
 

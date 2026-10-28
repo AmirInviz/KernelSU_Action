@@ -63,23 +63,29 @@ ksu_install() {
 		ok "ref '${ref}' exists"
 	fi
 
-	local setup_url="https://raw.githubusercontent.com/${repo#https://github.com/}/${setup_ref}/kernel/setup.sh"
-	(
-		cd "$KERNEL_DIR"
-		if [ -n "$ref" ]; then
-			fetch_stdout "$setup_url" | bash -s "$ref"
-		else
-			fetch_stdout "$setup_url" | bash
-		fi
-	) || die "${name} setup.sh failed"
-
+	# دانلود سورس backslashxx
 	local ksu_dir="${KERNEL_DIR}/${dir}"
-	[ -d "$ksu_dir" ] || die "${name} setup.sh finished but ${dir}/ is missing"
+	rm -rf "$ksu_dir"
+	git clone -q --depth=1 -b "${ref:-master}" "$repo" "$ksu_dir" || die "Failed to clone ${repo}"
 
-	# اطمینان قطعی از لینک شدن آبجکت‌های KernelSU به بیلد نهایی کرنل
+	# کپی مستقیم فایل‌های سورس backslashxx در مسیر درایورها برای حل خطای undefined symbol
+	info "Populating drivers/kernelsu from backslashxx..."
+	rm -rf "${KERNEL_DIR}/drivers/kernelsu"
+	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
+	cp -r "${ksu_dir}/"* "${KERNEL_DIR}/drivers/kernelsu/"
+
+	# ایجاد ساختار سازگار برای ریشه کرنل
+	mkdir -p "${KERNEL_DIR}/KernelSU/kernel"
+	cp -r "${ksu_dir}/"* "${KERNEL_DIR}/KernelSU/kernel/" 2>/dev/null || true
+
 	local driver_makefile="${KERNEL_DIR}/drivers/Makefile"
 	sed -i '/kernelsu/d' "$driver_makefile" 2>/dev/null || true
 	printf '\nobj-y += kernelsu/\n' >>"$driver_makefile"
+
+	local driver_kconfig="${KERNEL_DIR}/drivers/Kconfig"
+	if ! grep -q 'drivers/kernelsu/Kconfig' "$driver_kconfig"; then
+		sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$driver_kconfig"
+	fi
 
 	local head_desc head_sha
 	head_sha=$(git -C "$ksu_dir" rev-parse --short HEAD)

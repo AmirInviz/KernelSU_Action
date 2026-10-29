@@ -2,18 +2,12 @@ name: Build Kernel
 
 on:
   workflow_dispatch:
-    # GitHub allows at most 10 workflow_dispatch inputs, so these are the knobs
-    # worth changing per-run. Everything else lives in the config file selected
-    # by `config`, so a fork can keep one profile per device.
     inputs:
       config:
         description: "Config file to build (path, relative to the repo root)"
         required: false
         default: "config.env"
         type: string
-      # "config" on the options below means "use whatever the config file says".
-      # It is the default so that running the form without touching anything
-      # reproduces exactly what your profile describes.
       ksu_variant:
         description: "KernelSU variant"
         required: false
@@ -87,7 +81,6 @@ on:
       extra_defconfig: { required: false, default: "",           type: string }
       publish_release: { required: false, default: false,        type: boolean }
 
-# Only one build per ref at a time; a newer run supersedes an older one.
 concurrency:
   group: build-kernel-${{ github.ref }}-${{ inputs.config }}
   cancel-in-progress: true
@@ -114,7 +107,6 @@ jobs:
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
 
-      # workflow inputs -> IN_* overrides consumed by scripts/config.sh
       IN_KSU_VARIANT: ${{ inputs.ksu_variant }}
       IN_KSU_REF: ${{ inputs.ksu_ref }}
       IN_KSU_HOOK_MODE: ${{ inputs.hook_mode }}
@@ -132,7 +124,7 @@ jobs:
 
       - name: Free up disk space
         if: env.REMOVE_UNUSED_PACKAGES == 'true'
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
         with:
           tool-cache: true
           android: false
@@ -144,8 +136,6 @@ jobs:
 
       - name: Add swap space
         run: |
-          # LTO links are memory-hungry and the runner has 16GB; a swap file is
-          # cheaper and more predictable than an unpinned third-party action.
           sudo fallocate -l 8G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
@@ -155,10 +145,6 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          # Kept deliberately lean. The historical list here was copied from the
-          # full AOSP platform build docs and pulled in ~40 packages a kernel
-          # build never touches, several of which no longer exist on current
-          # Ubuntu (python2, lib32ncurses5-dev, ...).
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl device-tree-compiler flex \
             git libelf-dev libssl-dev lz4 make python3 rsync unzip zip zstd \
@@ -217,6 +203,15 @@ jobs:
           path: kernel_workspace/AnyKernel3/*
           if-no-files-found: error
 
+      - name: Upload fgetpriority Module
+        uses: actions/upload-artifact@v4
+        with:
+          name: fgetpriority-4.19-Module-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
+          path: |
+            kernel_workspace/fgetpriority-4.19-Module.zip
+            kernel_workspace/android-kernel/out/arch/${{ env.ARCH }}/boot/fgetpriority-4.19-Module.zip
+          if-no-files-found: warn
+
       - name: Upload DTBO image
         if: env.CHECK_DTBO_IS_OK == 'true'
         uses: actions/upload-artifact@v4
@@ -231,8 +226,6 @@ jobs:
           name: boot${{ env.LOCALVERSION }}${{ env.UPLOADNAME }}-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
           path: kernel_workspace/boot.img
 
-  # Publishing is a separate job so the build itself runs with a read-only
-  # token; only this job gets contents:write, and only when asked for.
   release:
     name: Publish release
     needs: build
@@ -256,13 +249,13 @@ jobs:
             (cd "$dir" && zip -qr9 "${GITHUB_WORKSPACE}/release/${name}.zip" .)
             echo "packed ${name}.zip"
           done
-          for f in artifacts/*/Image* artifacts/*/boot.img artifacts/*/dtbo.img; do
+          for f in artifacts/*/Image* artifacts/*/boot.img artifacts/*/dtbo.img artifacts/*/*.zip; do
             [ -f "$f" ] && cp "$f" release/
           done
           ls -la release/
 
       - name: Create release
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8
         with:
           tag_name: ${{ needs.build.outputs.device }}-${{ needs.build.outputs.build_time }}
           name: ${{ needs.build.outputs.device }} · ${{ needs.build.outputs.ksu_name }} · ${{ needs.build.outputs.build_time }}

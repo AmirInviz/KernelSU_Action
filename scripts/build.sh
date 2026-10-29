@@ -2,11 +2,8 @@
 # Prepare the defconfig and compile the kernel.
 
 set -euo pipefail
-# shellcheck source=scripts/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=scripts/kernelsu.sh
 . "$(dirname "${BASH_SOURCE[0]}")/kernelsu.sh"
-# shellcheck source=scripts/patches.sh
 . "$(dirname "${BASH_SOURCE[0]}")/patches.sh"
 
 KERNEL_DIR=${KERNEL_DIR:?KERNEL_DIR must be set}
@@ -25,14 +22,12 @@ prepare_defconfig() {
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${WORKSPACE}/ksu_src"
 
-	# ۱. استقرار سورس‌های backslashxx در drivers/kernelsu
 	mkdir -p "${KERNEL_DIR}/drivers/kernelsu"
 	cp -r "${WORKSPACE}/ksu_src/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
 	if [ -d "${WORKSPACE}/ksu_src/kernel" ]; then
 		cp -r "${WORKSPACE}/ksu_src/kernel/"* "${KERNEL_DIR}/drivers/kernelsu/" 2>/dev/null || true
 	fi
 
-	# ۲. ایجاد فایل توابع سازگاری برای حل قطعی ۱۰ ارور undefined symbol
 	cat << 'EOF' > "${KERNEL_DIR}/drivers/ksu_compat_stubs.c"
 #include <linux/types.h>
 #include <linux/fs.h>
@@ -49,12 +44,10 @@ bool ksu_input_hook __read_mostly = false;
 int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) { return 0; }
 EOF
 
-	# ۳. اتصال سورس‌ها و فایل Stubs به Makefile درایورها
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
 	sed -i '/ksu_compat_stubs/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
 	printf '\nobj-y += ksu_compat_stubs.o kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
 
-	# ۴. استقرار در Kconfig
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Kconfig" 2>/dev/null || true
 	printf '\nsource "drivers/kernelsu/Kconfig"\n' >>"${KERNEL_DIR}/drivers/Kconfig"
 
@@ -141,7 +134,6 @@ build_kernel() {
 	export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-Github-Action}
 	export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-kernelsu-action}
 
-	# اعمال فیکس‌های مربوط به missing-syscalls و MLGO
 	sed -i 's/exit 1/exit 0/g' "${KERNEL_DIR}/scripts/checksyscalls.sh" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/Makefile" 2>/dev/null || true
 	sed -i -E 's/-mllvm -polly[^ ]*//g; s/-mllvm -regalloc[^ ]*//g; s/-mllvm -inline-advisor[^ ]*//g; s/-mllvm -enable-ml-inliner[^ ]*//g' "${KERNEL_DIR}/arch/arm64/Makefile" 2>/dev/null || true
@@ -169,6 +161,63 @@ build_kernel() {
 	info "make ${args}"
 	make -j"$(nproc --all)" CC="$cc" $args \
 		|| die "kernel build failed"
+
+	# ===================== کامپایل ماژول fgetpriority برای 4.19 =====================
+	info "Building compatible fgetpriority.ko module for 4.19..."
+	local fget_src="${WORKSPACE}/fget_src"
+	rm -rf "$fget_src"
+	git clone --depth=1 https://github.com/frknkrc44/fgetpriority.git "$fget_src" 2>/dev/null || \
+	git clone --depth=1 https://github.com/backslashxx/fgetpriority.git "$fget_src" 2>/dev/null || true
+
+	if [ -d "$fget_src" ]; then
+		# کامپایل ماژول با مشخصات دقیق همین کرنل
+		make -C "$OUT" M="$fget_src" ARCH=arm64 $args modules || true
+
+		local ko_file
+		ko_file=$(find "$fget_src" -name "fgetpriority.ko" | head -n1)
+
+		if [ -n "$ko_file" ] && [ -f "$ko_file" ]; then
+			info "Packaging fgetpriority Magisk/KernelSU module..."
+			local mod_pkg="${WORKSPACE}/fgetpriority_pkg"
+			rm -rf "$mod_pkg"; mkdir -p "${mod_pkg}/system/lib/modules"
+
+			cp "$ko_file" "${mod_pkg}/fgetpriority.ko"
+
+			cat << 'EOF' > "${mod_pkg}/module.prop"
+id=fgetpriority
+name=fgetpriority (4.19)
+version=v0.0.2-apollo
+versionCode=2
+author=xx, frknkrc44
+description=A kernel module to hide getpriority syscall results (Built specifically for 4.19).
+EOF
+
+			cat << 'EOF' > "${mod_pkg}/service.sh"
+#!/system/bin/sh
+MODDIR=${0%/*}
+insmod "$MODDIR/fgetpriority.ko"
+EOF
+			chmod 755 "${mod_pkg}/service.sh"
+
+			cat << 'EOF' > "${mod_pkg}/post-fs-data.sh"
+#!/system/bin/sh
+MODDIR=${0%/*}
+insmod "$MODDIR/fgetpriority.ko"
+EOF
+			chmod 755 "${mod_pkg}/post-fs-data.sh"
+
+			touch "${mod_pkg}/auto_mount"
+
+			(
+				cd "$mod_pkg"
+				zip -r9 "${OUT}/arch/${ARCH}/boot/fgetpriority-4.19-Module.zip" ./*
+			)
+			ok "fgetpriority-4.19-Module.zip successfully created!"
+		else
+			warn "fgetpriority.ko compilation skipped or failed."
+		fi
+	fi
+	# ==============================================================================
 
 	endgroup
 }

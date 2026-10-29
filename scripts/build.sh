@@ -166,20 +166,39 @@ build_kernel() {
 	info "Building compatible fgetpriority.ko module for 4.19..."
 	local fget_src="${WORKSPACE}/fget_src"
 	rm -rf "$fget_src"
-	git clone --depth=1 https://github.com/frknkrc44/fgetpriority.git "$fget_src" 2>/dev/null || \
-	git clone --depth=1 https://github.com/backslashxx/fgetpriority.git "$fget_src" 2>/dev/null || true
+	git clone --depth=1 -b lkm https://github.com/aerath-stuff/fgetpriority.git "$fget_src" 2>/dev/null || \
+	git clone --depth=1 https://github.com/aerath-stuff/fgetpriority.git "$fget_src" 2>/dev/null || true
 
 	if [ -d "$fget_src" ]; then
-		# کامپایل ماژول با مشخصات دقیق همین کرنل
-		make -C "$OUT" M="$fget_src" ARCH=arm64 $args modules || true
+		local make_dir="$fget_src"
+		local make_file
+		make_file=$(find "$fget_src" -maxdepth 2 \( -name "Makefile" -o -name "Kbuild" \) | head -n1)
+
+		if [ -n "$make_file" ]; then
+			make_dir=$(dirname "$make_file")
+		else
+			local c_file
+			c_file=$(find "$fget_src" -name "*.c" | head -n1)
+			if [ -n "$c_file" ]; then
+				make_dir=$(dirname "$c_file")
+				local mod_name
+				mod_name=$(basename "$c_file" .c)
+				echo "obj-m += ${mod_name}.o" > "${make_dir}/Makefile"
+			fi
+		fi
+
+		info "Compiling LKM in ${make_dir}..."
+		cd "$KERNEL_DIR"
+		# shellcheck disable=SC2086
+		make -j"$(nproc --all)" CC="$cc" $args M="$make_dir" modules || true
 
 		local ko_file
-		ko_file=$(find "$fget_src" -name "fgetpriority.ko" | head -n1)
+		ko_file=$(find "$fget_src" -name "*.ko" | head -n1)
 
 		if [ -n "$ko_file" ] && [ -f "$ko_file" ]; then
 			info "Packaging fgetpriority Magisk/KernelSU module..."
 			local mod_pkg="${WORKSPACE}/fgetpriority_pkg"
-			rm -rf "$mod_pkg"; mkdir -p "${mod_pkg}/system/lib/modules"
+			rm -rf "$mod_pkg"; mkdir -p "${mod_pkg}"
 
 			cp "$ko_file" "${mod_pkg}/fgetpriority.ko"
 
@@ -206,12 +225,13 @@ insmod "$MODDIR/fgetpriority.ko"
 EOF
 			chmod 755 "${mod_pkg}/post-fs-data.sh"
 
-			touch "${mod_pkg}/auto_mount"
-
 			(
 				cd "$mod_pkg"
-				zip -r9 "${OUT}/arch/${ARCH}/boot/fgetpriority-4.19-Module.zip" ./*
+				zip -r9 "${WORKSPACE}/fgetpriority-4.19-Module.zip" ./*
 			)
+			cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${OUT}/arch/${ARCH}/boot/" 2>/dev/null || true
+			mkdir -p "${WORKSPACE}/AnyKernel3" 2>/dev/null || true
+			cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${WORKSPACE}/AnyKernel3/" 2>/dev/null || true
 			ok "fgetpriority-4.19-Module.zip successfully created!"
 		else
 			warn "fgetpriority.ko compilation skipped or failed."

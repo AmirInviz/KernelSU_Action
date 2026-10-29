@@ -18,7 +18,7 @@ DEFCONFIG_PATH="${KERNEL_DIR}/arch/${ARCH}/configs/${KERNEL_CONFIG}"
 prepare_defconfig() {
 	group "Preparing defconfig"
 
-	info "Setting up backslashxx KernelSU and Compatibility Stubs..."
+	info "Setting up backslashxx KernelSU and In-Tree fgetpriority..."
 	rm -rf "${KERNEL_DIR}/KernelSU" "${KERNEL_DIR}/drivers/kernelsu"
 	git clone --depth=1 https://github.com/backslashxx/KernelSU.git "${WORKSPACE}/ksu_src"
 
@@ -44,9 +44,78 @@ bool ksu_input_hook __read_mostly = false;
 int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) { return 0; }
 EOF
 
+	# سورس رسمی و کاملاً منطبق بر کرنل 4.19 به عنوان ماژول داخلی
+	cat << 'EOF' > "${KERNEL_DIR}/drivers/fgetpriority.c"
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/types.h>
+#include <linux/sched.h>
+#include <linux/cred.h>
+#include <linux/uidgid.h>
+#include <linux/kprobes.h>
+#include <linux/ptrace.h>
+#include <linux/version.h>
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("xx, frknkrc44");
+MODULE_DESCRIPTION("fgetpriority syscall filter for Linux 4.19");
+MODULE_VERSION("0.0.2");
+
+static struct kprobe kp;
+
+static int handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+    kuid_t uid = current_uid();
+    if (uid.val >= 10000) {
+        if (regs->regs[0] >= 0xffff000000000000ULL) {
+            struct pt_regs *user_regs = (struct pt_regs *)regs->regs[0];
+            if (user_regs && user_regs->regs[0] == 0) {
+                user_regs->regs[1] = 99999999;
+            }
+        } else {
+            if (regs->regs[0] == 0) {
+                regs->regs[1] = 99999999;
+            }
+        }
+    }
+    return 0;
+}
+
+static int __init fget_init(void)
+{
+    int ret;
+    kp.symbol_name = "__arm64_sys_getpriority";
+    kp.pre_handler = handler_pre;
+
+    ret = register_kprobe(&kp);
+    if (ret < 0) {
+        kp.symbol_name = "sys_getpriority";
+        ret = register_kprobe(&kp);
+    }
+    if (ret < 0) {
+        pr_err("fgetpriority: failed to register kprobe: %d\n", ret);
+        return ret;
+    }
+    pr_info("fgetpriority: loaded successfully on 4.19!\n");
+    return 0;
+}
+
+static void __exit fget_exit(void)
+{
+    unregister_kprobe(&kp);
+    pr_info("fgetpriority: unloaded!\n");
+}
+
+module_init(fget_init);
+module_exit(fget_exit);
+EOF
+
+	# اتصال ماژول به سیستم بیلد رسمی لینوکس جهت تولید بخش __versions و چک‌سام‌های MODVERSIONS
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
 	sed -i '/ksu_compat_stubs/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
-	printf '\nobj-y += ksu_compat_stubs.o kernelsu/\n' >>"${KERNEL_DIR}/drivers/Makefile"
+	sed -i '/fgetpriority/d' "${KERNEL_DIR}/drivers/Makefile" 2>/dev/null || true
+	printf '\nobj-y += ksu_compat_stubs.o kernelsu/\nobj-m += fgetpriority.o\n' >>"${KERNEL_DIR}/drivers/Makefile"
 
 	sed -i '/kernelsu/d' "${KERNEL_DIR}/drivers/Kconfig" 2>/dev/null || true
 	printf '\nsource "drivers/kernelsu/Kconfig"\n' >>"${KERNEL_DIR}/drivers/Kconfig"
@@ -80,7 +149,7 @@ EOF
 
 	if is_true "${ADD_KPROBES_CONFIG:-false}"; then
 		kconf_set_many "$DEFCONFIG_PATH" \
-			CONFIG_MODULES=y CONFIG_KPROBES=y CONFIG_HAVE_KPROBES=y CONFIG_KPROBE_EVENTS=y
+			CONFIG_MODULES=y CONFIG_KPROBES=y CONFIG_HAVE_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_ARM64_MODULE_PLTS=y
 	fi
 
 	if is_true "${DISABLE_LTO:-false}"; then
@@ -162,88 +231,12 @@ build_kernel() {
 	make -j"$(nproc --all)" CC="$cc" $args \
 		|| die "kernel build failed"
 
-	# ===================== بیلد صددرصد مطمئن و سازگار fgetpriority برای 4.19 =====================
-	info "Building native 4.19 fgetpriority.ko..."
-	local fget_dir="${WORKSPACE}/fget_module"
-	rm -rf "$fget_dir"; mkdir -p "$fget_dir"
+	# ===================== بسته‌بندی ماژول کامپایل‌شده درایور =====================
+	local ko_file
+	ko_file=$(find "${OUT}" -name "fgetpriority.ko" | head -n1)
 
-	cat << 'EOF' > "${fget_dir}/fgetpriority.c"
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/init.h>
-#include <linux/types.h>
-#include <linux/sched.h>
-#include <linux/cred.h>
-#include <linux/uidgid.h>
-#include <linux/kprobes.h>
-#include <linux/ptrace.h>
-#include <linux/version.h>
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("xx, frknkrc44");
-MODULE_DESCRIPTION("fgetpriority syscall filter for Linux 4.19");
-MODULE_VERSION("0.0.2");
-
-static struct kprobe kp;
-
-static int handler_pre(struct kprobe *p, struct pt_regs *regs)
-{
-    kuid_t uid = current_uid();
-    if (uid.val >= 10000) {
-        if (regs->regs[0] >= 0xffff000000000000ULL) {
-            struct pt_regs *user_regs = (struct pt_regs *)regs->regs[0];
-            if (user_regs && user_regs->regs[0] == 0) {
-                user_regs->regs[1] = 99999999;
-            }
-        } else {
-            if (regs->regs[0] == 0) {
-                regs->regs[1] = 99999999;
-            }
-        }
-    }
-    return 0;
-}
-
-static int __init fget_init(void)
-{
-    int ret;
-    kp.symbol_name = "__arm64_sys_getpriority";
-    kp.pre_handler = handler_pre;
-
-    ret = register_kprobe(&kp);
-    if (ret < 0) {
-        kp.symbol_name = "sys_getpriority";
-        ret = register_kprobe(&kp);
-    }
-    if (ret < 0) {
-        pr_err("fgetpriority: failed to register kprobe: %d\n", ret);
-        return ret;
-    }
-    pr_info("fgetpriority: loaded successfully on 4.19!\n");
-    return 0;
-}
-
-static void __exit fget_exit(void)
-{
-    unregister_kprobe(&kp);
-    pr_info("fgetpriority: unloaded!\n");
-}
-
-module_init(fget_init);
-module_exit(fget_exit);
-EOF
-
-	cat << 'EOF' > "${fget_dir}/Makefile"
-obj-m := fgetpriority.o
-EOF
-
-	info "Compiling fgetpriority.ko..."
-	cd "$KERNEL_DIR"
-	make -j"$(nproc --all)" CC="$cc" $args M="$fget_dir" modules || true
-
-	local ko_file="${fget_dir}/fgetpriority.ko"
-	if [ -f "$ko_file" ]; then
-		info "Packaging fgetpriority Magisk/KernelSU module..."
+	if [ -n "$ko_file" ] && [ -f "$ko_file" ]; then
+		info "Packaging native in-tree fgetpriority.ko ($ko_file)..."
 		local mod_pkg="${WORKSPACE}/fgetpriority_pkg"
 		rm -rf "$mod_pkg"; mkdir -p "${mod_pkg}"
 
@@ -279,13 +272,11 @@ EOF
 			zip -r9 "${WORKSPACE}/fgetpriority-4.19-Module.zip" ./*
 		)
 		cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${OUT}/arch/${ARCH}/boot/" 2>/dev/null || true
-		mkdir -p "${WORKSPACE}/AnyKernel3" 2>/dev/null || true
-		cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${WORKSPACE}/AnyKernel3/" 2>/dev/null || true
-		ok "fgetpriority-4.19-Module.zip successfully created!"
+		ok "fgetpriority-4.19-Module.zip successfully generated with matching MODVERSIONS!"
 	else
-		die "fgetpriority.ko compilation failed."
+		die "fgetpriority.ko was not produced by kernel build!"
 	fi
-	# ==============================================================================================
+	# ==============================================================================
 
 	endgroup
 }

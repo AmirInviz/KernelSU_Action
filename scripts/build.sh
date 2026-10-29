@@ -170,39 +170,36 @@ build_kernel() {
 	git clone --depth=1 https://github.com/aerath-stuff/fgetpriority.git "$fget_src" 2>/dev/null || true
 
 	if [ -d "$fget_src" ]; then
-		local make_dir="$fget_src"
-		local make_file
-		make_file=$(find "$fget_src" -maxdepth 2 \( -name "Makefile" -o -name "Kbuild" \) | head -n1)
+		local c_file
+		c_file=$(find "$fget_src" -name "*.c" | head -n1)
 
-		if [ -n "$make_file" ]; then
-			make_dir=$(dirname "$make_file")
-		else
-			local c_file
-			c_file=$(find "$fget_src" -name "*.c" | head -n1)
-			if [ -n "$c_file" ]; then
-				make_dir=$(dirname "$c_file")
-				local mod_name
-				mod_name=$(basename "$c_file" .c)
-				echo "obj-m += ${mod_name}.o" > "${make_dir}/Makefile"
-			fi
-		fi
+		if [ -n "$c_file" ]; then
+			local build_dir
+			build_dir=$(dirname "$c_file")
+			local base_name
+			base_name=$(basename "$c_file" .c)
 
-		info "Compiling LKM in ${make_dir}..."
-		cd "$KERNEL_DIR"
-		# shellcheck disable=SC2086
-		make -j"$(nproc --all)" CC="$cc" $args M="$make_dir" modules || true
+			# تضمین Makefile معتبر برای ایجاد آبجکت ماژول
+			cat << EOF > "${build_dir}/Makefile"
+obj-m := ${base_name}.o
+EOF
 
-		local ko_file
-		ko_file=$(find "$fget_src" -name "*.ko" | head -n1)
+			info "Compiling LKM directly for ${base_name}.ko..."
+			cd "$KERNEL_DIR"
+			# shellcheck disable=SC2086
+			make -j"$(nproc --all)" CC="$cc" $args M="$build_dir" modules || true
 
-		if [ -n "$ko_file" ] && [ -f "$ko_file" ]; then
-			info "Packaging fgetpriority Magisk/KernelSU module..."
-			local mod_pkg="${WORKSPACE}/fgetpriority_pkg"
-			rm -rf "$mod_pkg"; mkdir -p "${mod_pkg}"
+			local ko_file
+			ko_file=$(find "$fget_src" -name "*.ko" | head -n1)
 
-			cp "$ko_file" "${mod_pkg}/fgetpriority.ko"
+			if [ -n "$ko_file" ] && [ -f "$ko_file" ]; then
+				info "Packaging fgetpriority Magisk/KernelSU module..."
+				local mod_pkg="${WORKSPACE}/fgetpriority_pkg"
+				rm -rf "$mod_pkg"; mkdir -p "${mod_pkg}"
 
-			cat << 'EOF' > "${mod_pkg}/module.prop"
+				cp "$ko_file" "${mod_pkg}/fgetpriority.ko"
+
+				cat << 'EOF' > "${mod_pkg}/module.prop"
 id=fgetpriority
 name=fgetpriority (4.19)
 version=v0.0.2-apollo
@@ -211,30 +208,31 @@ author=xx, frknkrc44
 description=A kernel module to hide getpriority syscall results (Built specifically for 4.19).
 EOF
 
-			cat << 'EOF' > "${mod_pkg}/service.sh"
+				cat << 'EOF' > "${mod_pkg}/service.sh"
 #!/system/bin/sh
 MODDIR=${0%/*}
 insmod "$MODDIR/fgetpriority.ko"
 EOF
-			chmod 755 "${mod_pkg}/service.sh"
+				chmod 755 "${mod_pkg}/service.sh"
 
-			cat << 'EOF' > "${mod_pkg}/post-fs-data.sh"
+				cat << 'EOF' > "${mod_pkg}/post-fs-data.sh"
 #!/system/bin/sh
 MODDIR=${0%/*}
 insmod "$MODDIR/fgetpriority.ko"
 EOF
-			chmod 755 "${mod_pkg}/post-fs-data.sh"
+				chmod 755 "${mod_pkg}/post-fs-data.sh"
 
-			(
-				cd "$mod_pkg"
-				zip -r9 "${WORKSPACE}/fgetpriority-4.19-Module.zip" ./*
-			)
-			cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${OUT}/arch/${ARCH}/boot/" 2>/dev/null || true
-			mkdir -p "${WORKSPACE}/AnyKernel3" 2>/dev/null || true
-			cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${WORKSPACE}/AnyKernel3/" 2>/dev/null || true
-			ok "fgetpriority-4.19-Module.zip successfully created!"
-		else
-			warn "fgetpriority.ko compilation skipped or failed."
+				(
+					cd "$mod_pkg"
+					zip -r9 "${WORKSPACE}/fgetpriority-4.19-Module.zip" ./*
+				)
+				cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${OUT}/arch/${ARCH}/boot/" 2>/dev/null || true
+				mkdir -p "${WORKSPACE}/AnyKernel3" 2>/dev/null || true
+				cp "${WORKSPACE}/fgetpriority-4.19-Module.zip" "${WORKSPACE}/AnyKernel3/" 2>/dev/null || true
+				ok "fgetpriority-4.19-Module.zip successfully created!"
+			else
+				warn "fgetpriority.ko compilation skipped."
+			fi
 		fi
 	fi
 	# ==============================================================================
